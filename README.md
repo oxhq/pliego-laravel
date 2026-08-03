@@ -1,12 +1,15 @@
 # oxhq/pliego-laravel
 
 Experimental Laravel 13 bridge for application-owned Blade documents. See the
-[alpha support profile](../../docs/pliego/support-profile.md) and
-[CLI bridge guide](../../docs/pliego/laravel-cli-bridge.md).
+[Pliego repository](https://github.com/oxhq/pliego) for the support profile and
+CLI bridge guide.
 
 ```sh
-composer require oxhq/pliego-laravel:^0.1@alpha
+composer require oxhq/pliego-laravel:^0.1.0-alpha.1 oxhq/pliego-php:^0.1.0-alpha.1
 ```
+
+Both constraints are explicit during alpha so Composer accepts the transitive
+PHP package without changing the application's global minimum stability.
 
 Offline assets are the reproducible default. Live URLs are opt-in with
 `allowHttpRoot()`; a Google Fonts stylesheet needs explicit roots for both
