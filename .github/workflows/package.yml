@@ -29,5 +29,7 @@ jobs:
       - name: Install public dependencies
         run: composer --no-interaction --no-plugins --no-scripts install --no-progress --prefer-dist
 
-      - name: Run focused quickstart
-        run: composer --no-interaction --no-plugins test
+      - name: Run focused package tests
+        run: |
+          composer --no-interaction --no-plugins test
+          php tests/quickstart_test.php

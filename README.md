@@ -1,15 +1,22 @@
 # oxhq/pliego-laravel
 
 Experimental Laravel 13 bridge for application-owned Blade documents. See the
-[Pliego repository](https://github.com/oxhq/pliego) for the support profile and
-CLI bridge guide.
+[alpha support profile](https://github.com/oxhq/pliego/blob/main/docs/pliego/support-profile.md)
+and [CLI bridge guide](https://github.com/oxhq/pliego/blob/main/docs/pliego/laravel-cli-bridge.md).
 
 ```sh
-composer require oxhq/pliego-laravel:^0.1.0-alpha.1 oxhq/pliego-php:^0.1.0-alpha.1
+composer require oxhq/pliego-laravel:^0.1.0-alpha.2 oxhq/pliego-php:^0.1.0-alpha.2
+php artisan pliego:install
+php artisan pliego:doctor
 ```
 
 Both constraints are explicit during alpha so Composer accepts the transitive
 PHP package without changing the application's global minimum stability.
+`pliego:install` downloads the package-pinned native runtime for Linux x64,
+Windows x64, or macOS Intel/Apple Silicon, verifies its bundled size and
+SHA-256, and stores it under `storage/app/pliego-runtime`. Set
+`PLIEGO_RUNTIME_DIR` to move that managed directory. `PLIEGO_BINARY` remains an
+explicit override for system packages and air-gapped deployments.
 
 Offline assets are the reproducible default. Live URLs are opt-in with
 `allowHttpRoot()`; a Google Fonts stylesheet needs explicit roots for both
