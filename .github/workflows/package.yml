@@ -1,0 +1,33 @@
+name: Laravel package
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pliego-laravel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Validate package
+        run: composer --no-interaction --no-plugins --no-scripts validate --strict
+
+      - name: Install public dependencies
+        run: composer --no-interaction --no-plugins --no-scripts install --no-progress --prefer-dist
+
+      - name: Run focused quickstart
+        run: composer --no-interaction --no-plugins test

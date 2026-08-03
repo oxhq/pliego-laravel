@@ -17,6 +17,9 @@
             "Pliego\\Laravel\\Experimental\\": "src/"
         }
     },
+    "scripts": {
+        "test": "@php tests/quickstart_test.php"
+    },
     "extra": {
         "laravel": {
             "providers": [
