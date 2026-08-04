@@ -9,10 +9,10 @@ php artisan pliego:install
 php artisan pliego:doctor
 ```
 
-Both Composer constraints are explicit for the 0.1 alpha releases so applications
-do not need to change their global minimum stability. `pliego:install` selects the
-pinned runtime for Linux x64, Windows x64, or macOS Intel/Apple Silicon, verifies
-its size and SHA-256, and installs it under `storage/app/pliego-runtime`.
+Both Composer constraints are explicit so applications do not need to change their
+global minimum stability. `pliego:install` selects the pinned runtime for Linux
+x64, Windows x64, or macOS Intel/Apple Silicon, verifies its size and SHA-256, and
+installs it under `storage/app/pliego-runtime`.
 
 Set `PLIEGO_RUNTIME_DIR` to move the managed directory. `PLIEGO_BINARY` is an
 explicit override for system packages and air-gapped deployments; unset it when
