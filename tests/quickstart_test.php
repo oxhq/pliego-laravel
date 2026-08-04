@@ -16,6 +16,8 @@ if (($argv[1] ?? null) === '__fake_pliego__') {
         || !is_string($artifacts)
         || file_get_contents('document.html') !== "<h1>Invoice 42</h1>\n"
         || file_get_contents('assets/invoice.woff2') !== 'rights-cleared-font'
+        || ($options['--page-size'] ?? null) !== '816x1056'
+        || ($options['--page-margins'] ?? null) !== '48,48,48,48'
         || in_array('--allow-http-root', $argv, true)
     ) {
         fwrite(STDERR, "invalid quickstart request\n");
@@ -28,6 +30,10 @@ if (($argv[1] ?? null) === '__fake_pliego__') {
         'status' => 'rendered',
         'document_pdf' => $output,
         'artifacts' => $artifacts,
+        'scene' => [
+            'capture_status' => 'complete',
+            'capture_code' => null,
+        ],
     ])."\n");
     exit(0);
 }
@@ -42,9 +48,9 @@ use Illuminate\View\Engines\CompilerEngine;
 use Illuminate\View\Engines\EngineResolver;
 use Illuminate\View\Factory;
 use Illuminate\View\FileViewFinder;
-use Pliego\Laravel\Experimental\DocumentFactory;
-use Pliego\Php\Experimental\CliRenderer;
-use Pliego\Php\Experimental\RenderOptions;
+use Pliego\Laravel\DocumentFactory;
+use Pliego\Php\CliRenderer;
+use Pliego\Php\RenderOptions;
 
 function check(bool $condition, string $message): void
 {
