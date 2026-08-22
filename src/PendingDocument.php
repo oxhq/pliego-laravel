@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace Pliego\Laravel;
 
+use BadMethodCallException;
 use Illuminate\Contracts\Filesystem\Factory as FilesystemFactory;
 use Illuminate\Contracts\View\Factory as ViewFactory;
 use InvalidArgumentException;
 use Pliego\Laravel\Exception\DocumentStorageException;
-use Pliego\Php\CliRenderer;
+use Pliego\Php\DocumentEngine;
 use Pliego\Php\RenderOptions;
 use Pliego\Php\RenderResult;
 use RuntimeException;
@@ -16,28 +17,27 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Throwable;
 
 /**
- * Blade-to-one-shot-CLI render request.
+ * Blade-to-one-shot API 2 render request.
  */
 final class PendingDocument
 {
     /** @var array<string, string> */
     private array $assets = [];
 
-    /** @var list<string> */
-    private array $allowedHttpRoots;
-
     private string $locale;
+
     private string $timezone;
+
     private string $pageSize;
+
     private string $pageMargins;
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     public function __construct(
         private readonly ViewFactory $views,
-        private readonly CliRenderer $renderer,
-        private readonly string $workDirectory,
+        private readonly DocumentEngine $engine,
         RenderOptions $defaults,
         private readonly string $view,
         private readonly array $data,
@@ -48,7 +48,6 @@ final class PendingDocument
         $this->timezone = $defaults->timezone;
         $this->pageSize = $defaults->pageSize;
         $this->pageMargins = $defaults->pageMargins;
-        $this->allowedHttpRoots = $defaults->allowedHttpRoots;
     }
 
     public function pageSize(string $value): self
@@ -81,16 +80,17 @@ final class PendingDocument
 
     public function denyNetwork(): self
     {
-        $this->allowedHttpRoots = [];
-
         return $this;
     }
 
+    /**
+     * @deprecated API 2 profile-null denies live network access. Prefetch and pass the resource to asset().
+     */
     public function allowHttpRoot(string $url): self
     {
-        $this->allowedHttpRoots[] = $url;
-
-        return $this;
+        throw new BadMethodCallException(
+            'Pliego API 2 denies live network access; prefetch the resource and pass it to asset()',
+        );
     }
 
     public function asset(string $bundlePath, string $source): self
@@ -100,35 +100,20 @@ final class PendingDocument
         return $this;
     }
 
-    public function render(string $filename = 'document.pdf'): RenderResult
+    public function render(): RenderResult
     {
         $totalStartedAt = hrtime(true);
-        if ($filename === '' || basename($filename) !== $filename || str_contains($filename, "\0")) {
-            throw new InvalidArgumentException('PDF filename must be a plain file name');
-        }
-        if (!is_dir($this->workDirectory) && !@mkdir($this->workDirectory, 0700, true)) {
-            throw new RuntimeException("cannot create Pliego work directory {$this->workDirectory}");
-        }
-
-        $job = rtrim($this->workDirectory, '/\\').DIRECTORY_SEPARATOR.bin2hex(random_bytes(16));
-        if (!@mkdir($job, 0700)) {
-            throw new RuntimeException("cannot create Pliego job directory {$job}");
-        }
         $viewStartedAt = hrtime(true);
         $html = $this->views->make($this->view, $this->data)->render();
         $viewFinishedAt = hrtime(true);
 
-        return $this->renderer->render(
+        return $this->engine->render(
             $html,
-            "{$job}/input",
-            "{$job}/{$filename}",
-            "{$job}/artifacts",
             new RenderOptions(
                 locale: $this->locale,
                 timezone: $this->timezone,
                 pageSize: $this->pageSize,
                 pageMargins: $this->pageMargins,
-                allowedHttpRoots: array_values(array_unique($this->allowedHttpRoots)),
             ),
             $this->assets,
             bridgeContext: [
@@ -141,7 +126,10 @@ final class PendingDocument
 
     public function download(string $filename = 'document.pdf'): BinaryFileResponse
     {
-        $result = $this->render($filename);
+        if ($filename === '' || basename($filename) !== $filename || str_contains($filename, "\0")) {
+            throw new InvalidArgumentException('PDF filename must be a plain file name');
+        }
+        $result = $this->render();
 
         return response()->download(
             $result->pdfPath,
@@ -151,7 +139,7 @@ final class PendingDocument
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      */
     public function store(
         string $path,
@@ -177,12 +165,12 @@ final class PendingDocument
             }
 
             $stream = @fopen($result->pdfPath, 'rb');
-            if (!is_resource($stream)) {
+            if (! is_resource($stream)) {
                 throw new RuntimeException("cannot open rendered PDF {$result->pdfPath}");
             }
 
             try {
-                if (!$this->filesystems->disk($disk)->writeStream($path, $stream, $options)) {
+                if (! $this->filesystems->disk($disk)->writeStream($path, $stream, $options)) {
                     throw new RuntimeException('filesystem write returned false');
                 }
             } finally {

@@ -2,11 +2,10 @@
 
 Laravel 13 integration for application-owned Blade documents.
 
-The v0.2 Laravel package line is published on Packagist; this compatible constraint
-selects its latest published patch:
+The v0.3 package uses Pliego API 2 and pins `oxhq/pliego-php` 0.3.0:
 
 ```sh
-composer require oxhq/pliego-laravel:^0.2.0
+composer require oxhq/pliego-laravel:^0.3.0
 php artisan pliego:install
 php artisan pliego:doctor
 ```
@@ -20,7 +19,7 @@ macOS Intel and Apple Silicon bundles require macOS 13 or newer. The Intel
 binary is unsigned and Apple Silicon is ad-hoc signed; neither is Developer ID
 signed or notarized.
 
-The Laravel package installs the PHP bridge as its dependency. `pliego:install`
+The Laravel package installs the API 2 PHP client as its dependency. `pliego:install`
 selects the pinned runtime for Linux x64, Windows x64, or macOS Intel/Apple
 Silicon, verifies its size and SHA-256, and installs it under
 `storage/app/pliego-runtime`.
@@ -41,14 +40,14 @@ use Pliego\Laravel\Facades\Document;
 return Document::view('invoice', compact('rows'))->download();
 ```
 
-Add locale, resource policy, and local assets only when the view needs them:
+Add locale, timezone, and reviewed local assets only when the view needs them:
 
 ```php
 use Pliego\Laravel\Facades\Document;
 
 return Document::view('invoice', ['rows' => $rows])
     ->locale('es-MX')
-    ->timezone('PST8PDT')
+    ->timezone('America/Tijuana')
     ->denyNetwork()
     ->asset('fonts/invoice.woff2', resource_path('fonts/invoice.woff2'))
     ->download('invoice.pdf');
@@ -72,6 +71,10 @@ $stored->renderResult; // retained Pliego render and diagnostic paths
 filesystem disk. Omitting `disk` uses the application's configured default disk.
 The render job is retained under the normal success/failure retention policy; it
 is not deleted after the durable write.
+
+The API 2 engine owns its private job, input, diagnostics, and delivery paths.
+Laravel uses the requested filename only for the HTTP download name; the retained
+delivery is always `delivery/document.pdf`.
 
 Omit `disk` to use `filesystems.default`, including a local disk. After installing
 Laravel's S3 adapter, pass `s3` for that disk. MinIO, Cloudflare R2, and other
@@ -100,33 +103,6 @@ final readonly class StoreInvoicePdf implements ShouldQueue
             disk: 'private',
         );
     }
-}
-```
-
-For a custom flow, or while supporting package v0.2.1, the equivalent manual
-streaming fallback is:
-
-```php
-use Illuminate\Support\Facades\Storage;
-use Pliego\Laravel\Facades\Document;
-
-$result = Document::view('invoice', ['rows' => $rows])->render();
-$stream = fopen($result->pdfPath, 'rb');
-
-if (! is_resource($stream)) {
-    throw new RuntimeException('Cannot open the rendered PDF');
-}
-
-try {
-    if (! Storage::disk('private')->writeStream(
-        'invoices/42.pdf',
-        $stream,
-        ['visibility' => 'private'],
-    )) {
-        throw new RuntimeException('The storage write failed');
-    }
-} finally {
-    fclose($stream);
 }
 ```
 
@@ -162,33 +138,26 @@ rounded or mixed-color borders, clips, non-solid and image borders, transforms,
 opacity, filters, and blend modes are explicitly unsupported and reported rather
 than approximated.
 
-Blade is rendered first. The package creates a private input directory, copies only
-declared relative assets, records their hashes, and launches one `pliego render`
-process with explicit locale, timezone, page geometry, and resource policy.
-`download()` returns a Laravel file response; `render()` returns the PDF,
-input-bundle, and retained-artifact paths.
+Blade is rendered first. The API 2 PHP client creates the private cwd-v1 job,
+copies only declared relative assets, records their hashes in the canonical input
+manifest, negotiates the exact public contract, and launches one
+`pliego render-api2` process. `download()` returns a Laravel file response;
+`render()` returns the retained PDF, scene v2, bundle, input, diagnostics, and
+job paths.
 
-For Google Fonts, keep the stylesheet `<link>` in the Blade view and allow both
-origins:
-
-```php
-$pdf = Document::view('invoice')
-    ->allowHttpRoot('https://fonts.googleapis.com/')
-    ->allowHttpRoot('https://fonts.gstatic.com/s/')
-    ->render();
-```
+API 2 profile-null denies live network and host-font discovery. Prefetch every
+stylesheet, font, image, or script and pass it with `asset()`. The legacy
+`allowHttpRoot()` method is deprecated and throws an actionable exception; it
+never silently ignores the requested origin.
 
 ## Failures and retained evidence
 
-Catch `Pliego\Php\Exception\RenderException` for typed failures. The
-exception preserves the engine code, process exit code, stderr, and retained input
-and artifact paths. Failed renders do not publish a final PDF.
-
-On the v0.2 API 1 runtime, the exception's artifact path is a requested locator, not
-an existence guarantee. Deterministic publication preflight failures create no
-public artifact tree and leave an already-existing output unchanged. Check
-`is_dir($error->artifactsPath)` before reading diagnostics; validated engine failure
-evidence remains available when it can be promoted atomically.
+Catch `Pliego\Php\Exception\RenderFailedException` when an accepted API 2
+request produces a validated failed result. It preserves the stable error kind,
+canonical result, retained job, runtime and diagnostics paths, and bridge timings.
+`InvocationException` identifies a rejected invocation; `TransportException`
+identifies process, framing, or artifact-integrity failure. Failed renders never
+publish a delivery PDF.
 
 Catch `Pliego\Laravel\Exception\DocumentStorageException` when rendering succeeds
 but durable storage fails. It preserves the requested disk and path, the original

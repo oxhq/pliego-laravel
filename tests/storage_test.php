@@ -2,73 +2,6 @@
 
 declare(strict_types=1);
 
-if (($argv[1] ?? null) === '__fake_pliego_storage__') {
-    $options = [];
-    for ($index = 4; $index < count($argv); $index += 2) {
-        $options[$argv[$index]] = $argv[$index + 1] ?? null;
-    }
-    $output = $options['--output'] ?? null;
-    $artifacts = $options['--artifacts'] ?? null;
-    if (
-        ($argv[2] ?? null) !== 'render'
-        || ($argv[3] ?? null) !== 'document.html'
-        || !is_string($output)
-        || !is_string($artifacts)
-    ) {
-        fwrite(STDERR, "invalid storage test request\n");
-        exit(2);
-    }
-
-    $html = file_get_contents('document.html');
-    if (!is_string($html)) {
-        fwrite(STDERR, "cannot read storage test document\n");
-        exit(2);
-    }
-    if (str_contains($html, 'Invoice render-failure')) {
-        fwrite(STDOUT, json_encode([
-            'status' => 'failed',
-            'error' => [
-                'code' => 'STORAGE_TEST_RENDER_FAILED',
-                'message' => 'synthetic render failure before storage',
-            ],
-        ], JSON_THROW_ON_ERROR)."\n");
-        fwrite(STDERR, "synthetic render failure\n");
-        exit(1);
-    }
-
-    mkdir($artifacts, 0700, true);
-    $pdf = fopen($output, 'wb');
-    if (!is_resource($pdf)) {
-        fwrite(STDERR, "cannot create storage test PDF\n");
-        exit(2);
-    }
-    if (fwrite($pdf, "%PDF-1.7\n") !== 9) {
-        fwrite(STDERR, "cannot write storage test PDF header\n");
-        exit(2);
-    }
-    if (str_contains($html, 'Invoice 42')) {
-        $chunk = str_repeat('p', 1024 * 1024);
-        for ($index = 0; $index < 32; $index++) {
-            if (fwrite($pdf, $chunk) !== strlen($chunk)) {
-                fwrite(STDERR, "cannot write storage test PDF body\n");
-                exit(2);
-            }
-        }
-    }
-    fclose($pdf);
-
-    fwrite(STDOUT, json_encode([
-        'status' => 'rendered',
-        'document_pdf' => $output,
-        'artifacts' => $artifacts,
-        'scene' => [
-            'capture_status' => 'complete',
-            'capture_code' => null,
-        ],
-    ], JSON_THROW_ON_ERROR)."\n");
-    exit(0);
-}
-
 require dirname(__DIR__).'/vendor/autoload.php';
 
 use Illuminate\Container\Container;
@@ -81,6 +14,7 @@ use Illuminate\Filesystem\FilesystemManager;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Testing\ParallelTesting;
 use Illuminate\View\Compilers\BladeCompiler;
 use Illuminate\View\Engines\CompilerEngine;
 use Illuminate\View\Engines\EngineResolver;
@@ -89,8 +23,8 @@ use Illuminate\View\FileViewFinder;
 use Pliego\Laravel\DocumentFactory;
 use Pliego\Laravel\Exception\DocumentStorageException;
 use Pliego\Laravel\StoredDocument;
-use Pliego\Php\CliRenderer;
-use Pliego\Php\Exception\EngineRenderException;
+use Pliego\Php\DocumentEngine;
+use Pliego\Php\Exception\RenderFailedException;
 use Pliego\Php\RenderOptions;
 
 final class StorageTestApplication extends Container
@@ -103,11 +37,11 @@ final class StorageTestApplication extends Container
     }
 }
 
-if (!function_exists('storage_path')) {
+if (! function_exists('storage_path')) {
     function storage_path(string $path = ''): string
     {
         $app = Container::getInstance();
-        if (!$app instanceof StorageTestApplication) {
+        if (! $app instanceof StorageTestApplication) {
             throw new RuntimeException('storage test application is not configured');
         }
 
@@ -138,7 +72,7 @@ final class StorageTestConfig implements ArrayAccess
 
     public function offsetSet(mixed $offset, mixed $value): void
     {
-        if (!is_string($offset)) {
+        if (! is_string($offset)) {
             throw new InvalidArgumentException('test config keys must be strings');
         }
         Arr::set($this->items, $offset, $value);
@@ -155,6 +89,7 @@ final class StorageTestConfig implements ArrayAccess
 final class StorageWriteFailureDisk extends FilesystemAdapter
 {
     public bool $writeAttempted = false;
+
     public string $writtenPath = '';
 
     /** @var array<string, mixed> */
@@ -215,14 +150,14 @@ final readonly class StorageQueuedConsumer implements ShouldQueue
 
 function storageExpect(bool $condition, string $message): void
 {
-    if (!$condition) {
+    if (! $condition) {
         throw new RuntimeException($message);
     }
 }
 
 function removeStorageFixture(string $path): void
 {
-    if (!file_exists($path)) {
+    if (! file_exists($path)) {
         return;
     }
     if (is_file($path) || is_link($path)) {
@@ -236,7 +171,7 @@ function removeStorageFixture(string $path): void
         RecursiveIteratorIterator::CHILD_FIRST,
     );
     foreach ($iterator as $entry) {
-        $entry->isDir() && !$entry->isLink()
+        $entry->isDir() && ! $entry->isLink()
             ? rmdir($entry->getPathname())
             : unlink($entry->getPathname());
     }
@@ -248,9 +183,9 @@ function storageDocumentFactory(
     FilesystemFactory $filesystems,
     string $defaultDisk,
 ): DocumentFactory {
-    $files = new Filesystem();
-    $container = new Container();
-    $resolver = new EngineResolver();
+    $files = new Filesystem;
+    $container = new Container;
+    $resolver = new EngineResolver;
     $resolver->register('blade', fn () => new CompilerEngine(
         new BladeCompiler($files, "{$root}/cache"),
         $files,
@@ -264,9 +199,8 @@ function storageDocumentFactory(
 
     return new DocumentFactory(
         $views,
-        new CliRenderer([PHP_BINARY, __FILE__, '__fake_pliego_storage__']),
-        "{$root}/jobs",
-        new RenderOptions(),
+        new DocumentEngine([PHP_BINARY, __DIR__.'/fake_api2.php'], "{$root}/jobs"),
+        new RenderOptions,
         $filesystems,
         $defaultDisk,
     );
@@ -304,7 +238,8 @@ $app->instance('config', new StorageTestConfig([
 ]));
 $filesystems = new FilesystemManager($app);
 $app->instance('filesystem', $filesystems);
-$app->instance(\Illuminate\Testing\ParallelTesting::class, new class {
+$app->instance(ParallelTesting::class, new class
+{
     public function token(): false
     {
         return false;
@@ -318,11 +253,16 @@ Storage::fake('archive');
 
 $memoryBefore = memory_get_usage(true);
 memory_reset_peak_usage();
-$stored = $factory->view('invoice', ['number' => 42])->store(
-    'invoices/42.pdf',
-    'archive',
-    ['visibility' => 'public'],
-);
+putenv('PLIEGO_LARAVEL_FAKE_LARGE_PDF=1');
+try {
+    $stored = $factory->view('invoice', ['number' => 42])->store(
+        'invoices/42.pdf',
+        'archive',
+        ['visibility' => 'public'],
+    );
+} finally {
+    putenv('PLIEGO_LARAVEL_FAKE_LARGE_PDF');
+}
 $additionalPeak = memory_get_peak_usage(true) - $memoryBefore;
 storageExpect($stored instanceof StoredDocument, 'store did not return a typed result');
 storageExpect($stored->disk === 'archive', 'stored disk identity changed');
@@ -356,9 +296,9 @@ $renderFailurePath = 'invoices/render-failure.pdf';
 try {
     $factory->view('invoice', ['number' => 'render-failure'])->store($renderFailurePath, 'archive');
     throw new RuntimeException('render failure was converted into a stored document');
-} catch (EngineRenderException $error) {
-    storageExpect($error->errorCode === 'STORAGE_TEST_RENDER_FAILED', 'render failure lost its typed engine code');
-    storageExpect(!Storage::disk('archive')->exists($renderFailurePath), 'render failure wrote a durable target');
+} catch (RenderFailedException $error) {
+    storageExpect($error->kind === 'resource', 'render failure lost its stable API 2 kind');
+    storageExpect(! Storage::disk('archive')->exists($renderFailurePath), 'render failure wrote a durable target');
     storageExpect(is_dir($error->jobPath), 'render failure did not retain its job evidence');
 }
 
@@ -392,7 +332,7 @@ foreach (['false', 'throw'] as $failureMode) {
         $failureDisk->writtenOptions === ['visibility' => 'private'],
         "{$failureMode} write changed the options",
     );
-    storageExpect(!is_resource($failureDisk->sourceStream), "{$failureMode} write left the source stream open");
+    storageExpect(! is_resource($failureDisk->sourceStream), "{$failureMode} write left the source stream open");
 }
 
 $queuedPayload = serialize(new StorageQueuedConsumer(45, 'invoices/45.pdf', 'archive'));
