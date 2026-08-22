@@ -25,8 +25,8 @@ $bundled = json_decode(
 runtimeExpect(
     ($bundled['version'] ?? null) === '0.3.0'
         && ($bundled['api'] ?? null) === 2
-        && ($bundled['release_ready'] ?? null) === false,
-    'bundled v0.3 runtime manifest must remain pending until native promotion',
+        && ($bundled['release_ready'] ?? null) === true,
+    'bundled v0.3 runtime manifest must be finalized from native promotion',
 );
 
 function removeRuntimeFixture(string $path): void
