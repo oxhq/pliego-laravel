@@ -2,6 +2,9 @@
 
 Laravel 13 integration for application-owned Blade documents.
 
+The v0.2 Laravel package line is published on Packagist; this compatible constraint
+selects its latest published patch:
+
 ```sh
 composer require oxhq/pliego-laravel:^0.2.0
 php artisan pliego:install
@@ -22,9 +25,11 @@ selects the pinned runtime for Linux x64, Windows x64, or macOS Intel/Apple
 Silicon, verifies its size and SHA-256, and installs it under
 `storage/app/pliego-runtime`.
 
-Set `PLIEGO_RUNTIME_DIR` to move the managed directory. `PLIEGO_BINARY` is an
-explicit override for system packages and air-gapped deployments; unset it when
-testing managed installation.
+Managed installation accepts only finalized package metadata and verifies the
+package-pinned archive size, SHA-256, and file inventory. An unfinalized package
+fails before download. Set `PLIEGO_RUNTIME_DIR` to move the managed directory.
+`PLIEGO_BINARY` remains an explicit override for a reviewed system or air-gapped
+installation; unset it when testing managed installation.
 
 ## Rendering a Blade view
 
@@ -102,6 +107,12 @@ $pdf = Document::view('invoice')
 Catch `Pliego\Php\Exception\RenderException` for typed failures. The
 exception preserves the engine code, process exit code, stderr, and retained input
 and artifact paths. Failed renders do not publish a final PDF.
+
+On the v0.2 API 1 runtime, the exception's artifact path is a requested locator, not
+an existence guarantee. Deterministic publication preflight failures create no
+public artifact tree and leave an already-existing output unchanged. Check
+`is_dir($error->artifactsPath)` before reading diagnostics; validated engine failure
+evidence remains available when it can be promoted atomically.
 
 Successful jobs are retained for one day and failed jobs for seven days by default.
 Preview or apply cleanup with:
