@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace Pliego\Laravel;
 
+use Illuminate\Contracts\Filesystem\Factory as FilesystemFactory;
 use Illuminate\Contracts\View\Factory as ViewFactory;
 use InvalidArgumentException;
+use Pliego\Laravel\Exception\DocumentStorageException;
 use Pliego\Php\CliRenderer;
 use Pliego\Php\RenderOptions;
 use Pliego\Php\RenderResult;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Throwable;
 
 /**
  * Blade-to-one-shot-CLI render request.
@@ -38,6 +41,8 @@ final class PendingDocument
         RenderOptions $defaults,
         private readonly string $view,
         private readonly array $data,
+        private readonly ?FilesystemFactory $filesystems = null,
+        private readonly ?string $defaultStorageDisk = null,
     ) {
         $this->locale = $defaults->locale;
         $this->timezone = $defaults->timezone;
@@ -143,5 +148,52 @@ final class PendingDocument
             $filename,
             ['Content-Type' => 'application/pdf'],
         );
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function store(
+        string $path,
+        ?string $disk = null,
+        array $options = [],
+    ): StoredDocument {
+        if ($path === '' || str_contains($path, "\0")) {
+            throw new InvalidArgumentException('PDF storage path is invalid');
+        }
+        $disk ??= $this->defaultStorageDisk;
+        if ($disk === null) {
+            throw new InvalidArgumentException('PDF storage disk is not configured');
+        }
+        if ($disk === '' || str_contains($disk, "\0")) {
+            throw new InvalidArgumentException('PDF storage disk is invalid');
+        }
+
+        $result = $this->render();
+
+        try {
+            if ($this->filesystems === null) {
+                throw new RuntimeException('Laravel filesystem storage is not available');
+            }
+
+            $stream = @fopen($result->pdfPath, 'rb');
+            if (!is_resource($stream)) {
+                throw new RuntimeException("cannot open rendered PDF {$result->pdfPath}");
+            }
+
+            try {
+                if (!$this->filesystems->disk($disk)->writeStream($path, $stream, $options)) {
+                    throw new RuntimeException('filesystem write returned false');
+                }
+            } finally {
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            }
+        } catch (Throwable $error) {
+            throw new DocumentStorageException($disk, $path, $result, $error);
+        }
+
+        return new StoredDocument($disk, $path, $result);
     }
 }

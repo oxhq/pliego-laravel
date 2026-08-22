@@ -54,6 +54,25 @@ return Document::view('invoice', ['rows' => $rows])
     ->download('invoice.pdf');
 ```
 
+Use Laravel Storage when the PDF must outlive Pliego's prunable render job:
+
+```php
+$stored = Document::view('invoice', ['rows' => $rows])->store(
+    path: 'invoices/42.pdf',
+    disk: 's3',
+    options: ['visibility' => 'private'],
+);
+
+$stored->disk;         // s3
+$stored->path;         // invoices/42.pdf
+$stored->renderResult; // retained Pliego render and diagnostic paths
+```
+
+`store()` renders once and passes an open PDF stream to the selected Laravel
+filesystem disk. Omitting `disk` uses the application's configured default disk.
+The render job is retained under the normal success/failure retention policy; it
+is not deleted after the durable write.
+
 Static Blade views need no readiness calls. Pliego infers readiness after page load
 and waits for `document.fonts.ready`. Call `defer()` only when JavaScript continues
 changing the document or a canvas after load, then finish with `ready()` or
@@ -113,6 +132,10 @@ an existence guarantee. Deterministic publication preflight failures create no
 public artifact tree and leave an already-existing output unchanged. Check
 `is_dir($error->artifactsPath)` before reading diagnostics; validated engine failure
 evidence remains available when it can be promoted atomically.
+
+Catch `Pliego\Laravel\Exception\DocumentStorageException` when rendering succeeds
+but durable storage fails. It preserves the requested disk and path, the original
+`RenderResult`, and the filesystem exception as its previous error.
 
 Successful jobs are retained for one day and failed jobs for seven days by default.
 Preview or apply cleanup with:

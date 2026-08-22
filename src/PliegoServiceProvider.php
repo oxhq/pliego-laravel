@@ -47,6 +47,8 @@ final class PliegoServiceProvider extends ServiceProvider
             );
         });
         $this->app->singleton(DocumentFactory::class, function ($app): DocumentFactory {
+            $defaultStorageDisk = $app['config']->get('filesystems.default');
+
             return new DocumentFactory(
                 $app->make(ViewFactory::class),
                 $app->make(CliRenderer::class),
@@ -57,6 +59,8 @@ final class PliegoServiceProvider extends ServiceProvider
                     pageSize: (string) $app['config']->get('pliego.page_size'),
                     pageMargins: (string) $app['config']->get('pliego.page_margins'),
                 ),
+                $app->make('filesystem'),
+                is_string($defaultStorageDisk) ? $defaultStorageDisk : null,
             );
         });
     }
