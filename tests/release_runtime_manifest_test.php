@@ -15,13 +15,19 @@ if (!is_string($releaseBytes) || !is_string($bundledBytes) || $releaseBytes !== 
 }
 
 $manifest = json_decode($bundledBytes, true, flags: JSON_THROW_ON_ERROR);
-$version = trim((string) file_get_contents(dirname(__DIR__).'/VERSION'));
+$composer = json_decode(
+    (string) file_get_contents(dirname(__DIR__).'/composer.json'),
+    true,
+    flags: JSON_THROW_ON_ERROR,
+);
+$bridgeVersion = $composer['require']['oxhq/pliego-php'] ?? null;
 if (
     !is_array($manifest)
     || ($manifest['release_ready'] ?? null) !== true
-    || ($manifest['version'] ?? null) !== $version
+    || !is_string($bridgeVersion)
+    || ($manifest['version'] ?? null) !== $bridgeVersion
 ) {
-    throw new RuntimeException('Bundled runtimes.json is not finalized for this Laravel package version');
+    throw new RuntimeException('Bundled runtimes.json is not finalized for the pinned Pliego PHP/native version');
 }
 
 echo "release runtime manifest: ok\n";

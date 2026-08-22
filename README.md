@@ -54,6 +54,82 @@ return Document::view('invoice', ['rows' => $rows])
     ->download('invoice.pdf');
 ```
 
+Use Laravel Storage when the PDF must outlive Pliego's prunable render job:
+
+```php
+$stored = Document::view('invoice', ['rows' => $rows])->store(
+    path: 'invoices/42.pdf',
+    disk: 'private',
+    options: ['visibility' => 'private'],
+);
+
+$stored->disk;         // private
+$stored->path;         // invoices/42.pdf
+$stored->renderResult; // retained Pliego render and diagnostic paths
+```
+
+`store()` renders once and passes an open PDF stream to the selected Laravel
+filesystem disk. Omitting `disk` uses the application's configured default disk.
+The render job is retained under the normal success/failure retention policy; it
+is not deleted after the durable write.
+
+Omit `disk` to use `filesystems.default`, including a local disk. After installing
+Laravel's S3 adapter, pass `s3` for that disk. MinIO, Cloudflare R2, and other
+S3-compatible services work through the normal Laravel `endpoint` and
+`use_path_style_endpoint` disk settings; Pliego does not read cloud credentials or
+bypass Laravel's filesystem adapter.
+
+Queue scalar document IDs, the destination path, and disk name, then resolve and
+render the document inside the job's `handle()` method. Do not serialize a
+`PendingDocument`, `RenderResult`, or open stream into the queue payload:
+
+```php
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Pliego\Laravel\DocumentFactory;
+
+final readonly class StoreInvoicePdf implements ShouldQueue
+{
+    public function __construct(public int $invoiceId) {}
+
+    public function handle(DocumentFactory $documents): void
+    {
+        $invoice = Invoice::findOrFail($this->invoiceId);
+
+        $documents->view('invoice', compact('invoice'))->store(
+            path: "invoices/{$invoice->id}.pdf",
+            disk: 'private',
+        );
+    }
+}
+```
+
+For a custom flow, or while supporting package v0.2.1, the equivalent manual
+streaming fallback is:
+
+```php
+use Illuminate\Support\Facades\Storage;
+use Pliego\Laravel\Facades\Document;
+
+$result = Document::view('invoice', ['rows' => $rows])->render();
+$stream = fopen($result->pdfPath, 'rb');
+
+if (! is_resource($stream)) {
+    throw new RuntimeException('Cannot open the rendered PDF');
+}
+
+try {
+    if (! Storage::disk('private')->writeStream(
+        'invoices/42.pdf',
+        $stream,
+        ['visibility' => 'private'],
+    )) {
+        throw new RuntimeException('The storage write failed');
+    }
+} finally {
+    fclose($stream);
+}
+```
+
 Static Blade views need no readiness calls. Pliego infers readiness after page load
 and waits for `document.fonts.ready`. Call `defer()` only when JavaScript continues
 changing the document or a canvas after load, then finish with `ready()` or
@@ -113,6 +189,10 @@ an existence guarantee. Deterministic publication preflight failures create no
 public artifact tree and leave an already-existing output unchanged. Check
 `is_dir($error->artifactsPath)` before reading diagnostics; validated engine failure
 evidence remains available when it can be promoted atomically.
+
+Catch `Pliego\Laravel\Exception\DocumentStorageException` when rendering succeeds
+but durable storage fails. It preserves the requested disk and path, the original
+`RenderResult`, and the filesystem exception as its previous error.
 
 Successful jobs are retained for one day and failed jobs for seven days by default.
 Preview or apply cleanup with:
