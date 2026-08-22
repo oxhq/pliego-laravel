@@ -41,17 +41,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version=$(tr -d '\r\n' < VERSION)
-          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "tag $GITHUB_REF_NAME does not match package version v$version" >&2
+          package_version=$(tr -d '\r\n' < VERSION)
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$package_version" ]]; then
+            echo "tag $GITHUB_REF_NAME does not match package version v$package_version" >&2
             exit 1
           fi
-          if [[ "$version" == "0.1.1" ]]; then
+          if [[ "$package_version" == "0.1.1" ]]; then
             echo "v0.1.1 predates the promoted-manifest contract"
             exit 0
           fi
+          runtime_version=$(php -r '
+            $manifest = json_decode(file_get_contents("resources/runtimes.json"), true, flags: JSON_THROW_ON_ERROR);
+            $version = $manifest["version"] ?? null;
+            if (!is_string($version) || $version === "") {
+                fwrite(STDERR, "runtime manifest version is invalid\n");
+                exit(1);
+            }
+            echo $version;
+          ')
           mkdir native-release
-          gh release download "v$version" \
+          gh release download "v$runtime_version" \
             --repo oxhq/pliego \
             --pattern runtimes.json \
             --dir native-release
