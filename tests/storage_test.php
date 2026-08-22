@@ -19,6 +19,23 @@ if (($argv[1] ?? null) === '__fake_pliego_storage__') {
         exit(2);
     }
 
+    $html = file_get_contents('document.html');
+    if (!is_string($html)) {
+        fwrite(STDERR, "cannot read storage test document\n");
+        exit(2);
+    }
+    if (str_contains($html, 'Invoice render-failure')) {
+        fwrite(STDOUT, json_encode([
+            'status' => 'failed',
+            'error' => [
+                'code' => 'STORAGE_TEST_RENDER_FAILED',
+                'message' => 'synthetic render failure before storage',
+            ],
+        ], JSON_THROW_ON_ERROR)."\n");
+        fwrite(STDERR, "synthetic render failure\n");
+        exit(1);
+    }
+
     mkdir($artifacts, 0700, true);
     $pdf = fopen($output, 'wb');
     if (!is_resource($pdf)) {
@@ -29,11 +46,13 @@ if (($argv[1] ?? null) === '__fake_pliego_storage__') {
         fwrite(STDERR, "cannot write storage test PDF header\n");
         exit(2);
     }
-    $chunk = str_repeat('p', 1024 * 1024);
-    for ($index = 0; $index < 32; $index++) {
-        if (fwrite($pdf, $chunk) !== strlen($chunk)) {
-            fwrite(STDERR, "cannot write storage test PDF body\n");
-            exit(2);
+    if (str_contains($html, 'Invoice 42')) {
+        $chunk = str_repeat('p', 1024 * 1024);
+        for ($index = 0; $index < 32; $index++) {
+            if (fwrite($pdf, $chunk) !== strlen($chunk)) {
+                fwrite(STDERR, "cannot write storage test PDF body\n");
+                exit(2);
+            }
         }
     }
     fclose($pdf);
@@ -54,8 +73,10 @@ require dirname(__DIR__).'/vendor/autoload.php';
 
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Filesystem\Factory as FilesystemFactory;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Filesystem\FilesystemManager;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Facade;
@@ -69,6 +90,7 @@ use Pliego\Laravel\DocumentFactory;
 use Pliego\Laravel\Exception\DocumentStorageException;
 use Pliego\Laravel\StoredDocument;
 use Pliego\Php\CliRenderer;
+use Pliego\Php\Exception\EngineRenderException;
 use Pliego\Php\RenderOptions;
 
 final class StorageTestApplication extends Container
@@ -127,6 +149,67 @@ final class StorageTestConfig implements ArrayAccess
         if (is_string($offset)) {
             Arr::forget($this->items, $offset);
         }
+    }
+}
+
+final class StorageWriteFailureDisk extends FilesystemAdapter
+{
+    public bool $writeAttempted = false;
+    public string $writtenPath = '';
+
+    /** @var array<string, mixed> */
+    public array $writtenOptions = [];
+
+    /** @var resource|null */
+    public mixed $sourceStream = null;
+
+    public function __construct(private readonly string $failureMode) {}
+
+    /** @param resource $resource */
+    public function writeStream($path, $resource, array $options = [])
+    {
+        $this->writeAttempted = true;
+        $this->writtenPath = (string) $path;
+        $this->writtenOptions = $options;
+        $this->sourceStream = $resource;
+
+        if ($this->failureMode === 'throw') {
+            throw new RuntimeException('synthetic throwing storage write');
+        }
+
+        return false;
+    }
+}
+
+final class StorageWriteFailureFactory implements FilesystemFactory
+{
+    public mixed $requestedDisk = null;
+
+    public function __construct(public readonly StorageWriteFailureDisk $storage) {}
+
+    public function disk($name = null): StorageWriteFailureDisk
+    {
+        $this->requestedDisk = $name;
+
+        return $this->storage;
+    }
+}
+
+final readonly class StorageQueuedConsumer implements ShouldQueue
+{
+    public function __construct(
+        public int $invoiceNumber,
+        public string $path,
+        public string $disk,
+    ) {}
+
+    public function handle(DocumentFactory $documents): StoredDocument
+    {
+        return $documents->view('invoice', ['number' => $this->invoiceNumber])->store(
+            $this->path,
+            $this->disk,
+            ['visibility' => 'private'],
+        );
     }
 }
 
@@ -263,7 +346,63 @@ storageExpect(is_dir($stored->renderResult->jobPath), 'successful storage delete
 $local = $factory->view('invoice', ['number' => 43])->store('invoices/43.pdf');
 storageExpect($local->disk === 'local', 'configured default storage disk was not retained');
 storageExpect(is_file("{$root}/local/invoices/43.pdf"), 'local disk did not receive the PDF');
+storageExpect(
+    hash_file('sha256', "{$root}/local/invoices/43.pdf") === hash_file('sha256', $local->renderResult->pdfPath),
+    'local disk changed the streamed PDF bytes',
+);
 storageExpect(is_dir($local->renderResult->jobPath), 'local storage deleted the render job');
+
+$renderFailurePath = 'invoices/render-failure.pdf';
+try {
+    $factory->view('invoice', ['number' => 'render-failure'])->store($renderFailurePath, 'archive');
+    throw new RuntimeException('render failure was converted into a stored document');
+} catch (EngineRenderException $error) {
+    storageExpect($error->errorCode === 'STORAGE_TEST_RENDER_FAILED', 'render failure lost its typed engine code');
+    storageExpect(!Storage::disk('archive')->exists($renderFailurePath), 'render failure wrote a durable target');
+    storageExpect(is_dir($error->jobPath), 'render failure did not retain its job evidence');
+}
+
+foreach (['false', 'throw'] as $failureMode) {
+    $failureDisk = new StorageWriteFailureDisk($failureMode);
+    $failureFilesystems = new StorageWriteFailureFactory($failureDisk);
+    $failureFactory = storageDocumentFactory($root, $failureFilesystems, 'failure');
+    $claimedDocument = null;
+
+    try {
+        $claimedDocument = $failureFactory
+            ->view('invoice', ['number' => "storage-{$failureMode}"])
+            ->store("invoices/{$failureMode}.pdf", options: ['visibility' => 'private']);
+        throw new RuntimeException("{$failureMode} storage failure returned a durable document");
+    } catch (DocumentStorageException $error) {
+        $expectedCause = $failureMode === 'throw'
+            ? 'synthetic throwing storage write'
+            : 'filesystem write returned false';
+        storageExpect($error->disk === 'failure', "{$failureMode} storage failure lost the disk identity");
+        storageExpect($error->path === "invoices/{$failureMode}.pdf", "{$failureMode} storage failure lost the path");
+        storageExpect($error->getPrevious()?->getMessage() === $expectedCause, "{$failureMode} storage failure lost its cause");
+        storageExpect(is_file($error->renderResult->pdfPath), "{$failureMode} storage failure lost the rendered PDF");
+        storageExpect(is_dir($error->renderResult->jobPath), "{$failureMode} storage failure lost the render job");
+    }
+
+    storageExpect($claimedDocument === null, "{$failureMode} storage failure claimed a durable object");
+    storageExpect($failureFilesystems->requestedDisk === 'failure', "{$failureMode} write resolved the wrong disk");
+    storageExpect($failureDisk->writeAttempted, "{$failureMode} write did not reach the filesystem");
+    storageExpect($failureDisk->writtenPath === "invoices/{$failureMode}.pdf", "{$failureMode} write changed the path");
+    storageExpect(
+        $failureDisk->writtenOptions === ['visibility' => 'private'],
+        "{$failureMode} write changed the options",
+    );
+    storageExpect(!is_resource($failureDisk->sourceStream), "{$failureMode} write left the source stream open");
+}
+
+$queuedPayload = serialize(new StorageQueuedConsumer(45, 'invoices/45.pdf', 'archive'));
+$queuedConsumer = unserialize($queuedPayload, ['allowed_classes' => [StorageQueuedConsumer::class]]);
+storageExpect($queuedConsumer instanceof StorageQueuedConsumer, 'queued storage consumer did not deserialize');
+$queued = $queuedConsumer->handle($factory);
+storageExpect($queued->disk === 'archive', 'queued storage consumer changed the disk');
+storageExpect($queued->path === 'invoices/45.pdf', 'queued storage consumer changed the path');
+storageExpect(Storage::disk('archive')->exists($queued->path), 'queued storage consumer did not persist the PDF');
+storageExpect(is_dir($queued->renderResult->jobPath), 'queued storage consumer deleted the render job');
 
 try {
     $factory->view('invoice', ['number' => 44])->store('invoices/44.pdf', 'broken');
