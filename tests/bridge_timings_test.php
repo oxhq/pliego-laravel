@@ -2,59 +2,6 @@
 
 declare(strict_types=1);
 
-if (($argv[1] ?? null) === '__fake_pliego__') {
-    $engineStartedAt = hrtime(true);
-    $engineTiming = static fn (): array => [
-        'schema' => 'pliego.engine-timings',
-        'version' => 1,
-        'unit' => 'milliseconds',
-        'measurement_boundary' => 'before_timings_artifact_write',
-        'total_ms' => (hrtime(true) - $engineStartedAt) / 1_000_000,
-    ];
-    if (($argv[2] ?? null) !== 'render' || ($argv[3] ?? null) !== 'document.html') {
-        fwrite(STDERR, "invalid fake command\n");
-        exit(2);
-    }
-
-    $options = [];
-    for ($index = 4; $index < count($argv); $index += 2) {
-        $options[$argv[$index]] = $argv[$index + 1] ?? null;
-    }
-    $html = file_get_contents('document.html');
-    if (!is_string($html) || !is_file('assets/test.txt')) {
-        fwrite(STDERR, "missing fake input\n");
-        exit(2);
-    }
-    if (str_contains($html, 'FAIL_ENGINE')) {
-        fwrite(STDOUT, json_encode([
-            'status' => 'failed',
-            'error' => ['code' => 'RESOURCE_DENIED', 'message' => 'synthetic denial'],
-            'engine_timings' => $engineTiming(),
-        ], JSON_THROW_ON_ERROR)."\n");
-        exit(1);
-    }
-
-    $output = $options['--output'] ?? null;
-    $artifacts = $options['--artifacts'] ?? null;
-    if (!is_string($output) || !is_string($artifacts)) {
-        fwrite(STDERR, "missing fake output paths\n");
-        exit(2);
-    }
-    mkdir($artifacts, 0700, true);
-    file_put_contents($output, "%PDF-1.7\n% focused Laravel timing proof\n");
-    fwrite(STDOUT, json_encode([
-        'status' => 'rendered',
-        'document_pdf' => $output,
-        'artifacts' => $artifacts,
-        'scene' => [
-            'capture_status' => 'complete',
-            'capture_code' => null,
-        ],
-        'engine_timings' => $engineTiming(),
-    ], JSON_THROW_ON_ERROR)."\n");
-    exit(0);
-}
-
 use Illuminate\Container\Container;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
@@ -66,15 +13,18 @@ use Illuminate\View\Factory as ViewFactory;
 use Illuminate\View\FileViewFinder;
 use Pliego\Laravel\DocumentFactory;
 use Pliego\Laravel\Facades\Document;
-use Pliego\Php\CliRenderer;
-use Pliego\Php\Exception\EngineRenderException;
+use Pliego\Php\DocumentEngine;
+use Pliego\Php\Exception\RenderFailedException;
 use Pliego\Php\RenderOptions;
 
-require dirname(__DIR__).'/vendor/autoload.php';
+$autoload = getenv('PLIEGO_TEST_AUTOLOAD');
+require is_string($autoload) && $autoload !== ''
+    ? $autoload
+    : dirname(__DIR__).'/vendor/autoload.php';
 
 function bridgeExpect(bool $condition, string $message): void
 {
-    if (!$condition) {
+    if (! $condition) {
         throw new RuntimeException($message);
     }
 }
@@ -85,9 +35,9 @@ function bridgeReconciles(array $timings): bool
     $sum = array_sum(array_filter($timings['phases_ms'], is_float(...)));
 
     return abs($sum - $timings['total_ms']) < 0.02
-        && ($timings['measurement_boundary'] ?? null) === 'render-invocation-before-timing-diagnostics'
-        && is_float($timings['native_engine_ms'])
-        && abs($timings['native_engine_ms'] + $timings['bridge_overhead_ms'] - $timings['total_ms']) < 0.002;
+        && ($timings['schema'] ?? null) === 'pliego.php-bridge-timings'
+        && ($timings['version'] ?? null) === 2
+        && ($timings['measurement_boundary'] ?? null) === 'api2-render-invocation-before-timing-diagnostic';
 }
 
 $root = sys_get_temp_dir().'/pliego-laravel-timings-'.getmypid().'-'.bin2hex(random_bytes(4));
@@ -103,9 +53,9 @@ file_put_contents(
     '<h1>{{ $title }}</h1>@foreach ($rows as $row)<p>{{ $row }}</p>@endforeach',
 );
 
-$container = new Container();
-$files = new Filesystem();
-$resolver = new EngineResolver();
+$container = new Container;
+$files = new Filesystem;
+$resolver = new EngineResolver;
 $compiler = new BladeCompiler($files, $cachePath);
 $resolver->register('blade', static fn (): CompilerEngine => new CompilerEngine($compiler, $files));
 $views = new ViewFactory(
@@ -121,12 +71,12 @@ $container->singleton(DocumentFactory::class, static function () use ($views, $w
 
     return new DocumentFactory(
         $views,
-        new CliRenderer(
-            [$binary, __FILE__, '__fake_pliego__'],
+        new DocumentEngine(
+            [$binary, __DIR__.'/fake_api2.php'],
+            $workPath,
             runtimeResolutionNanoseconds: (int) (hrtime(true) - $runtimeStartedAt),
         ),
-        $workPath,
-        new RenderOptions(),
+        new RenderOptions,
     );
 });
 Facade::setFacadeApplication($container);
@@ -164,8 +114,8 @@ try {
         ->asset('assets/test.txt', $asset)
         ->render();
     throw new RuntimeException('expected typed Laravel failure');
-} catch (EngineRenderException $error) {
-    bridgeExpect($error->errorCode === 'RESOURCE_DENIED', 'typed Laravel failure preserved');
+} catch (RenderFailedException $error) {
+    bridgeExpect($error->kind === 'resource', 'typed Laravel API 2 failure preserved');
     bridgeExpect(is_float($error->bridgeTimings['phases_ms']['view_render']), 'failed Blade render measured');
     bridgeExpect(bridgeReconciles($error->bridgeTimings), 'failed Laravel phases reconcile');
 }

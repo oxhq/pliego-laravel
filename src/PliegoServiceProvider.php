@@ -10,7 +10,7 @@ use Illuminate\Support\ServiceProvider;
 use Pliego\Laravel\Console\DoctorCommand;
 use Pliego\Laravel\Console\InstallCommand;
 use Pliego\Laravel\Console\PruneCommand;
-use Pliego\Php\CliRenderer;
+use Pliego\Php\DocumentEngine;
 use Pliego\Php\RenderOptions;
 
 final class PliegoServiceProvider extends ServiceProvider
@@ -36,13 +36,14 @@ final class PliegoServiceProvider extends ServiceProvider
                 is_string($override) ? $override : null,
             );
         });
-        $this->app->singleton(CliRenderer::class, function ($app): CliRenderer {
+        $this->app->singleton(DocumentEngine::class, function ($app): DocumentEngine {
             $runtimeStartedAt = hrtime(true);
             $binary = $app->make(ManagedRuntime::class)->binary();
 
-            return new CliRenderer(
+            return new DocumentEngine(
                 [$binary],
-                (int) $app['config']->get('pliego.timeout_seconds'),
+                (string) $app['config']->get('pliego.work_dir'),
+                timeoutSeconds: (int) $app['config']->get('pliego.timeout_seconds'),
                 runtimeResolutionNanoseconds: (int) (hrtime(true) - $runtimeStartedAt),
             );
         });
@@ -51,8 +52,7 @@ final class PliegoServiceProvider extends ServiceProvider
 
             return new DocumentFactory(
                 $app->make(ViewFactory::class),
-                $app->make(CliRenderer::class),
-                (string) $app['config']->get('pliego.work_dir'),
+                $app->make(DocumentEngine::class),
                 new RenderOptions(
                     locale: (string) $app['config']->get('pliego.locale'),
                     timezone: (string) $app['config']->get('pliego.timezone'),
