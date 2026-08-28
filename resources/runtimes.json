@@ -1,12 +1,12 @@
 {
     "schema": 1,
-    "version": "0.3.2",
+    "version": "0.3.3",
     "api": 2,
     "release_ready": true,
     "assets": {
         "linux-x86_64": {
-            "bytes": 63026660,
-            "sha256": "9fe4c23a4ebd38edf520a53198bcc6633999e0211750c55d62e7a1203152fea0",
+            "bytes": 62996175,
+            "sha256": "bd1d87e18f26e476439bd996e7f3f65f9a3a49884b581337bef77303503ddb55",
             "files": [
                 "INSTALL.txt",
                 "LICENSE",
@@ -24,8 +24,8 @@
             ]
         },
         "windows-x86_64": {
-            "bytes": 59472037,
-            "sha256": "422c818531672a28de2bdfa64a41661024b4c3690e5ad576a5417de31f7865f0",
+            "bytes": 59490647,
+            "sha256": "a4235def73731c0fcb703d94dc3d6cd6462c601179dbbd7e1c1e44685016335b",
             "files": [
                 "INSTALL.txt",
                 "LICENSE",
@@ -49,8 +49,8 @@
             ]
         },
         "macos-x86_64": {
-            "bytes": 59703282,
-            "sha256": "d37fb8bed06615d48c547746e1dabc4be6dd9d15abc014c3474068d2fa440f52",
+            "bytes": 59711414,
+            "sha256": "1247ef4326208138a051b3c07e26dcc16091c21f336130cb63a71af1ce2f56c8",
             "files": [
                 "INSTALL.txt",
                 "LICENSE",
@@ -68,8 +68,8 @@
             ]
         },
         "macos-aarch64": {
-            "bytes": 56746001,
-            "sha256": "588f7b5c234f4bd604ba2d41252d4d6911108859f05b297ce3d2687ca076e9d5",
+            "bytes": 56737080,
+            "sha256": "bdcfdbd45c21a27656246bab057bedc190ba3b2bc2b056297a9566ec78955957",
             "files": [
                 "INSTALL.txt",
                 "LICENSE",
